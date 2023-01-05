@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "gazebo_ros2_control/gazebo_system.hpp"
+#include "gazebo/msgs/msgs.hh"
 #include "gazebo/sensors/ImuSensor.hh"
 #include "gazebo/sensors/ForceTorqueSensor.hh"
 #include "gazebo/sensors/SensorManager.hh"
@@ -41,6 +42,9 @@ public:
 
   ~GazeboSystemPrivate() = default;
 
+  // Gazebo transport handle
+  gazebo::transport::NodePtr node;
+
   /// \brief Degrees od freedom.
   size_t n_dof_;
 
@@ -49,6 +53,9 @@ public:
 
   /// \brief Gazebo Model Ptr.
   gazebo::physics::ModelPtr parent_model_;
+
+  // Gazebo transport handle
+  gazebo::transport::NodePtr transport_nh_;
 
   /// \brief last time the write method was called.
   rclcpp::Time last_update_sim_time_ros_;
@@ -61,6 +68,12 @@ public:
 
   /// \brief handles to the joints from within Gazebo
   std::vector<gazebo::physics::JointPtr> sim_joints_;
+
+  // Gazebo transport publishers
+  std::vector<gazebo::transport::PublisherPtr> gz_pubs_;
+
+  // Gazebo transport subscribers
+  std::vector<gazebo::transport::SubscriberPtr> gz_subs_;
 
   /// \brief vector with the current joint position
   std::vector<double> joint_position_;
@@ -79,6 +92,12 @@ public:
 
   /// \brief vector with the current cmd joint effort
   std::vector<double> joint_effort_cmd_;
+
+  /// \brief vector with the current gazebo transport cmds
+  std::vector<double> gazebo_topic_cmd_;
+
+  /// \brief vector with the current gazebo transport feedbacks
+  std::vector<double> gazebo_topic_fbk_;
 
   /// \brief handles to the imus from within Gazebo
   std::vector<gazebo::sensors::ImuSensorPtr> sim_imu_sensors_;
@@ -108,6 +127,7 @@ namespace gazebo_ros2_control
 bool GazeboSystem::initSim(
   rclcpp::Node::SharedPtr & model_nh,
   gazebo::physics::ModelPtr parent_model,
+  gazebo::transport::NodePtr &transport_nh,
   const hardware_interface::HardwareInfo & hardware_info,
   sdf::ElementPtr sdf)
 {
@@ -116,6 +136,7 @@ bool GazeboSystem::initSim(
 
   this->nh_ = model_nh;
   this->dataPtr->parent_model_ = parent_model;
+  this->dataPtr->transport_nh_ = transport_nh;
 
   gazebo::physics::PhysicsEnginePtr physics = gazebo::physics::get_world()->Physics();
 
@@ -127,6 +148,7 @@ bool GazeboSystem::initSim(
 
   registerJoints(hardware_info, parent_model);
   registerSensors(hardware_info, parent_model);
+  registerGazeboTopics(hardware_info, parent_model);
 
   if (this->dataPtr->n_dof_ == 0 && this->dataPtr->n_sensors_ == 0) {
     RCLCPP_WARN_STREAM(this->nh_->get_logger(), "There is no joint or sensor available");
@@ -432,6 +454,104 @@ void GazeboSystem::registerSensors(
   }
 }
 
+void GazeboSystem::registerGazeboTopics(
+    const hardware_interface::HardwareInfo &hardware_info,
+    gazebo::physics::ModelPtr parent_model)
+{
+  for (unsigned int j = 0; j < hardware_info.joints.size(); j++)
+  {
+    auto &info = hardware_info.joints[j];
+    std::string joint_name = this->dataPtr->joint_names_[j] = info.name;
+
+    for (unsigned int i = 0; i < info.command_interfaces.size(); i++)
+    {
+      std::string if_name = info.command_interfaces[i].name;
+      std::string initial_v = info.command_interfaces[i].initial_value;
+
+      if (if_name != "position" && if_name != "velocity" && if_name != "effort")
+      {
+
+        auto &ref = this->dataPtr->gazebo_topic_cmd_.emplace_back(0.0);
+
+        this->dataPtr->command_interfaces_.emplace_back(
+            joint_name,
+            if_name,
+            &ref);
+
+        if (!initial_v.empty())
+        {
+          ref = std::stod(initial_v);
+        }
+
+        dataPtr->gz_pubs_.push_back(
+          this->dataPtr->transport_nh_->Advertise<gazebo::msgs::Any>("~/" + joint_name + "/" + if_name)
+        );
+      }
+    }
+
+    this->dataPtr->gazebo_topic_fbk_.reserve(100);
+    this->dataPtr->gz_subs_.reserve(100);
+
+    for (unsigned int i = 0; i < info.state_interfaces.size(); i++)
+    {
+      std::string if_name = info.state_interfaces[i].name;
+
+      if (if_name != "position" && if_name != "velocity" && if_name != "effort"){
+
+        this->dataPtr->gazebo_topic_fbk_.emplace_back(0.0);
+
+        int idx = this->dataPtr->gazebo_topic_fbk_.size() - 1;
+
+        this->dataPtr->state_interfaces_.emplace_back(
+            joint_name,
+            if_name,
+            &this->dataPtr->gazebo_topic_fbk_[idx]);
+        
+        dataPtr->gz_subs_.push_back(
+          this->dataPtr->transport_nh_->Subscribe<gazebo::msgs::Any>(
+            "~/" + joint_name + "/" + if_name, 
+            [this, idx](ConstAnyPtr & msg) mutable -> void {
+              this->dataPtr->gazebo_topic_fbk_[idx] = msg->double_value();
+            }
+          )
+        );
+      }
+    }
+  }
+
+  for (unsigned int j = 0; j < hardware_info.sensors.size(); j++)
+  {
+    auto &info = hardware_info.sensors[j];
+    std::string sensor_name = info.name;
+
+    for (unsigned int i = 0; i < info.state_interfaces.size(); i++)
+    {
+      std::string if_name = info.state_interfaces[i].name;
+
+      if (if_name != "position" && if_name != "velocity" && if_name != "effort"){
+
+        this->dataPtr->gazebo_topic_fbk_.emplace_back(0.0);
+
+        int idx = this->dataPtr->gazebo_topic_fbk_.size() - 1;
+
+        this->dataPtr->state_interfaces_.emplace_back(
+            sensor_name,
+            if_name,
+            &this->dataPtr->gazebo_topic_fbk_[idx]);
+        
+        dataPtr->gz_subs_.push_back(
+          this->dataPtr->transport_nh_->Subscribe<gazebo::msgs::Any>(
+            "~/" + sensor_name + "/" + if_name, 
+            [this, idx](ConstAnyPtr & msg) mutable -> void {
+              this->dataPtr->gazebo_topic_fbk_[idx] = msg->double_value();
+            }
+          )
+        );
+      }
+    }
+  }
+}
+
 CallbackReturn
 GazeboSystem::on_init(const hardware_interface::HardwareInfo & system_info)
 {
@@ -603,6 +723,15 @@ hardware_interface::return_type GazeboSystem::write(
         this->dataPtr->sim_joints_[j]->SetForce(0, this->dataPtr->joint_effort_cmd_[j]);
       }
     }
+  }
+
+  gazebo::msgs::Any counterMsg;
+  counterMsg.set_type(gazebo::msgs::Any_ValueType::Any_ValueType_DOUBLE);
+
+  for (unsigned int j = 0; j < dataPtr->gz_pubs_.size(); j++)
+  {
+    counterMsg.set_double_value(this->dataPtr->gazebo_topic_cmd_[j]);
+    dataPtr->gz_pubs_[j]->Publish(counterMsg);
   }
 
   this->dataPtr->last_update_sim_time_ros_ = sim_time_ros;

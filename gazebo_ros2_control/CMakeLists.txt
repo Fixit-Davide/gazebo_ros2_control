@@ -26,7 +26,7 @@ link_directories(
 
 # Libraries
 add_library(${PROJECT_NAME} SHARED
-  src/gazebo_ros2_control_plugin.cpp
+  src/gazebo_ros2_control_plugin.cpp src/node.cc
 )
 ament_target_dependencies(${PROJECT_NAME}
   angles
@@ -62,8 +62,18 @@ ament_export_include_directories(
   include
 )
 
-ament_export_dependencies(ament_cmake)
-ament_export_dependencies(rclcpp)
+ament_export_dependencies(
+  ament_cmake
+  angles
+  controller_manager
+  gazebo_dev
+  gazebo_ros
+  hardware_interface
+  pluginlib
+  rclcpp
+  yaml_cpp_vendor
+)
+
 ament_export_libraries(
   ${PROJECT_NAME}
   gazebo_hardware_plugins
