@@ -11,10 +11,12 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 
-# Default to C++14
+# Default to C++17
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
 endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wconversion -Wno-sign-conversion -Wpedantic -Wnon-virtual-dtor -Woverloaded-virtual)
 endif()
@@ -26,7 +28,7 @@ link_directories(
 
 # Libraries
 add_library(${PROJECT_NAME} SHARED
-  src/gazebo_ros2_control_plugin.cpp
+  src/gazebo_ros2_control_plugin.cpp src/node.cc
 )
 ament_target_dependencies(${PROJECT_NAME}
   angles
@@ -38,10 +40,6 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   yaml_cpp_vendor
 )
-
-if("$ENV{ROS_DISTRO}" STREQUAL "rolling")
-  add_definitions(-DROLLING)
-endif()
 
 add_library(gazebo_hardware_plugins SHARED
   src/gazebo_system.cpp

@@ -26,6 +26,7 @@
 
 #include "hardware_interface/system_interface.hpp"
 
+#include "gazebo_ros2_control/node.hh"
 #include "rclcpp/rclcpp.hpp"
 
 
@@ -44,6 +45,7 @@ public:
   : mFlags(original.mFlags) {}
   ~SafeEnum() = default;
 
+  SafeEnum & operator=(const SafeEnum & original) = default;
   SafeEnum & operator|=(ENUM addValue) {mFlags |= addValue; return *this;}
   SafeEnum operator|(ENUM addValue) {SafeEnum result(*this); result |= addValue; return result;}
   SafeEnum & operator&=(ENUM maskValue) {mFlags &= maskValue; return *this;}
@@ -60,7 +62,7 @@ class GazeboSystemInterface
   : public hardware_interface::SystemInterface
 {
 public:
-  /// \brief Initilize the system interface
+  /// \brief Initialize the system interface
   /// param[in] model_nh pointer to the ros2 node
   /// param[in] parent_model pointer to the model
   /// param[in] control_hardware vector filled with information about robot's control resources
@@ -68,6 +70,7 @@ public:
   virtual bool initSim(
     rclcpp::Node::SharedPtr & model_nh,
     gazebo::physics::ModelPtr parent_model,
+    gazebo::transport::NodePtr & transport_nh,
     const hardware_interface::HardwareInfo & hardware_info,
     sdf::ElementPtr sdf) = 0;
 
